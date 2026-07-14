@@ -49,7 +49,9 @@ export function buildGraph(options: BuildGraphOptions): EngineGraph {
         id,
         `Duplicate name "${name}" in ${scope === "global" ? "global scope" : `page "${pageId}"`}`,
       );
+      continue;
     }
+    existingPage.set(name, def);
   }
   // -----------------------------------------------------------
 
@@ -81,7 +83,13 @@ export function buildGraph(options: BuildGraphOptions): EngineGraph {
   // -----------------------------------------------------------
 
   // check cycle errors  --------------------------------------
-
+  const { cyclic } = topoSort(
+    [...deps.keys()],
+    Object.fromEntries([...deps].map(([id, targets]) => [id, [...targets]])),
+  );
+  for (const id of cyclic) {
+    addError(id, "Part of a dependency cycle or depends on one");
+  }
   // -----------------------------------------------------------
 
   // config errors --------------------------------------
