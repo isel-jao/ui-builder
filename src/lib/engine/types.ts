@@ -1,6 +1,9 @@
 export type PrimitiveKind = "variable" | "function" | "query";
 // "loading" = in flight with no data to show yet; "reloading" = in flight
 // over kept stale data. Keyed on data presence, not run count.
+
+export type Scope = "global" | "page";
+
 export type ExecutionStatus =
   | "idle"
   | "loading"
@@ -12,6 +15,8 @@ interface PrimitiveDefBase {
   id: string;
   name: string;
   kind: PrimitiveKind;
+  scope: Scope;
+  pageId?: string;
 }
 
 // example: { kind: "variable", id: "v1", name: "var1", doc: "{num: {{num.value}}, str: {{str.value}}}" }
