@@ -9,6 +9,9 @@ export interface EngineGraph {
   readonly deps: ReadonlyMap<string, ReadonlySet<string>>;
   readonly revDeps: ReadonlyMap<string, ReadonlySet<string>>;
 
+  /** Topological order of the acyclic defs; cyclic defs are absent and config-errored. */
+  readonly order: readonly string[];
+
   readonly configErrors: ReadonlyMap<string, string>;
 }
 
@@ -83,7 +86,7 @@ export function buildGraph(options: BuildGraphOptions): EngineGraph {
   // -----------------------------------------------------------
 
   // check cycle errors  --------------------------------------
-  const { cyclic } = topoSort(
+  const { order, cyclic } = topoSort(
     [...deps.keys()],
     Object.fromEntries([...deps].map(([id, targets]) => [id, [...targets]])),
   );
@@ -102,6 +105,7 @@ export function buildGraph(options: BuildGraphOptions): EngineGraph {
     defs,
     deps,
     revDeps,
+    order,
     configErrors,
   };
 }
