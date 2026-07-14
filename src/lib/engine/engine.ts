@@ -1,3 +1,4 @@
+import { buildGraph } from "./graph";
 import type { PrimitiveDef, QueryDef } from "./types";
 
 type Snapshot = Record<string, unknown>;
@@ -32,6 +33,11 @@ export interface EngineOptions {
 }
 
 export function createEngine(defs: PrimitiveDef[], options: EngineOptions) {
-  void defs;
   void options;
+  const graph = buildGraph({ defs });
+
+  let disposed = false;
+  let sweeping = false;
+  let mounted = false;
+  let mountedPageId: string | undefined;
 }
