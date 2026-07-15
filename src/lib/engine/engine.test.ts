@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createEngine,
   type EffectHandle,
+  type Engine,
   type EngineOptions,
-  type Snapshot,
   type VariableHandle,
 } from "./engine";
 import type { FunctionDef, QueryDef, VariableDef } from "./types";
@@ -67,13 +67,15 @@ const echoQuery: EngineOptions = {
   executeQuery: async (_def, config) => config,
 };
 
-function varH(snapshot: Snapshot, name: string): VariableHandle {
-  return snapshot[name] as VariableHandle;
+function varHandle(engine: Engine, id: string): VariableHandle {
+  return engine.getHandle(id) as VariableHandle;
 }
 
-function effectH(snapshot: Snapshot, name: string): EffectHandle {
-  return snapshot[name] as EffectHandle;
+function effectHandle(engine: Engine, id: string): EffectHandle {
+  return engine.getHandle(id) as EffectHandle;
 }
+
+const noop = () => {};
 
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -88,47 +90,25 @@ function deferred<T>() {
 }
 
 describe("createEngine", () => {
-  it("mount sweeps variables in dependency order regardless of def order", () => {
+  it("activates a subscribed variable and its transitive deps, leaving the rest inactive", () => {
     const engine = createEngine(
       [
         variable("v3", "c", "{{b.value * 2}}"),
         variable("v1", "a", "1"),
         variable("v2", "b", "{{a.value + 1}}"),
+        variable("v4", "d", "5"),
       ],
       echoQuery,
     );
-    engine.mount();
-    const snap = engine.getSnapshot("global");
-    expect(varH(snap, "a").value).toBe(1);
-    expect(varH(snap, "b").value).toBe(2);
-    expect(varH(snap, "c").value).toBe(4);
+    engine.subscribe("v3", noop);
+    expect(varHandle(engine, "v1").value).toBe(1);
+    expect(varHandle(engine, "v2").value).toBe(2);
+    expect(varHandle(engine, "v3").value).toBe(4);
+    // Nothing subscribed to d or its downstream: never evaluated.
+    expect(varHandle(engine, "v4").value).toBeUndefined();
   });
 
-  it("setValue recomputes dependents and notifies once per batch", () => {
-    const engine = createEngine(
-      [
-        variable("v1", "a", "1"),
-        variable("v2", "b", "{{a.value + 1}}"),
-        variable("v3", "c", "{{b.value * 2}}"),
-      ],
-      echoQuery,
-    );
-    engine.mount();
-    const listener = vi.fn();
-    const unsubscribe = engine.subscribe(listener);
-
-    engine.setValue("v1", 10);
-    expect(listener).toHaveBeenCalledTimes(1);
-    const snap = engine.getSnapshot("global");
-    expect(varH(snap, "b").value).toBe(11);
-    expect(varH(snap, "c").value).toBe(22);
-
-    unsubscribe();
-    engine.setValue("v1", 20);
-    expect(listener).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps snapshots and untouched handles referentially stable", () => {
+  it("notifies only the changed ids' listeners, once per batch", () => {
     const engine = createEngine(
       [
         variable("v1", "a", "1"),
@@ -137,26 +117,54 @@ describe("createEngine", () => {
       ],
       echoQuery,
     );
-    engine.mount();
-    const first = engine.getSnapshot("global");
-    expect(engine.getSnapshot("global")).toBe(first);
+    const bListener = vi.fn();
+    const dListener = vi.fn();
+    const unsubscribeB = engine.subscribe("v2", bListener);
+    engine.subscribe("v4", dListener);
+    bListener.mockClear();
+    dListener.mockClear();
 
-    engine.setValue("v1", 2);
-    const second = engine.getSnapshot("global");
-    expect(second).not.toBe(first);
-    expect(second["a"]).not.toBe(first["a"]);
-    expect(second["b"]).not.toBe(first["b"]);
-    expect(second["d"]).toBe(first["d"]);
+    engine.setValue("v1", 10);
+    expect(bListener).toHaveBeenCalledTimes(1);
+    expect(dListener).not.toHaveBeenCalled();
+    expect(varHandle(engine, "v2").value).toBe(11);
+
+    // Globals stay active after unsubscribe (sticky), so the write still
+    // recomputes b — but the removed listener no longer hears about it.
+    unsubscribeB();
+    engine.setValue("v1", 20);
+    expect(bListener).toHaveBeenCalledTimes(1);
+    expect(varHandle(engine, "v2").value).toBe(21);
   });
 
-  it("lets snapshot handles write variables", () => {
+  it("keeps untouched handles referentially stable", () => {
+    const engine = createEngine(
+      [
+        variable("v1", "a", "1"),
+        variable("v2", "b", "{{a.value + 1}}"),
+        variable("v4", "d", "5"),
+      ],
+      echoQuery,
+    );
+    engine.subscribe("v2", noop);
+    engine.subscribe("v4", noop);
+    const b = engine.getHandle("v2");
+    const d = engine.getHandle("v4");
+    expect(engine.getHandle("v2")).toBe(b);
+
+    engine.setValue("v1", 2);
+    expect(engine.getHandle("v2")).not.toBe(b);
+    expect(engine.getHandle("v4")).toBe(d);
+  });
+
+  it("lets handles write variables", () => {
     const engine = createEngine(
       [variable("v1", "a", "1"), variable("v2", "b", "{{a.value + 1}}")],
       echoQuery,
     );
-    engine.mount();
-    varH(engine.getSnapshot("global"), "a").setValue(7);
-    expect(varH(engine.getSnapshot("global"), "b").value).toBe(8);
+    engine.subscribe("v2", noop);
+    varHandle(engine, "v1").setValue(7);
+    expect(varHandle(engine, "v2").value).toBe(8);
   });
 
   it("last write wins between setValue and dependency-driven recomputes", () => {
@@ -164,13 +172,22 @@ describe("createEngine", () => {
       [variable("v1", "a", "1"), variable("v2", "b", "{{a.value + 1}}")],
       echoQuery,
     );
-    engine.mount();
+    engine.subscribe("v2", noop);
 
     engine.setValue("v2", 99);
-    expect(varH(engine.getSnapshot("global"), "b").value).toBe(99);
+    expect(varHandle(engine, "v2").value).toBe(99);
 
     engine.setValue("v1", 5);
-    expect(varH(engine.getSnapshot("global"), "b").value).toBe(6);
+    expect(varHandle(engine, "v2").value).toBe(6);
+  });
+
+  it("drops writes to inactive variables; activation evaluates the doc fresh", () => {
+    const engine = createEngine([variable("v1", "a", "1")], echoQuery);
+    engine.setValue("v1", 7);
+    expect(varHandle(engine, "v1").value).toBeUndefined();
+
+    engine.subscribe("v1", noop);
+    expect(varHandle(engine, "v1").value).toBe(1);
   });
 
   it("records an evaluation error and degrades the value to undefined", () => {
@@ -178,13 +195,13 @@ describe("createEngine", () => {
       [variable("v1", "a", "{{missing.value.deep}}")],
       echoQuery,
     );
-    engine.mount();
-    const handle = varH(engine.getSnapshot("global"), "a");
+    engine.subscribe("v1", noop);
+    const handle = varHandle(engine, "v1");
     expect(handle.value).toBeUndefined();
     expect(handle.error).toBeTruthy();
   });
 
-  it("runs a runOnMount query with its evaluated config", async () => {
+  it("runs a runOnMount query on first subscription, activating its config deps first", async () => {
     const executeQuery = vi.fn(
       async (_def: QueryDef, config: Record<string, unknown>) => config,
     );
@@ -198,51 +215,48 @@ describe("createEngine", () => {
       ],
       { executeQuery },
     );
-    engine.mount();
-    expect(effectH(engine.getSnapshot("global"), "fetchData").status).toBe(
-      "loading",
-    );
+    engine.subscribe("q1", noop);
+    expect(effectHandle(engine, "q1").status).toBe("loading");
+    // The config dep was retained and evaluated before the run started.
+    expect(varHandle(engine, "v1").value).toBe(10);
 
     await tick();
     expect(executeQuery).toHaveBeenCalledWith(
       expect.objectContaining({ id: "q1" }),
       { url: "https://api.example.com", limit: 10 },
     );
-    const handle = effectH(engine.getSnapshot("global"), "fetchData");
+    const handle = effectHandle(engine, "q1");
     expect(handle.status).toBe("success");
     expect(handle.data).toEqual({ url: "https://api.example.com", limit: 10 });
   });
 
-  it("re-runs a runOnDepChange function when a dependency changes, but not on mount", async () => {
+  it("re-runs a runOnDepChange function when a dependency changes, but not on activation", async () => {
     const engine = createEngine(
       [variable("v1", "count", "0"), fn("f1", "double", "return count.value * 2")],
       echoQuery,
     );
-    engine.mount();
+    engine.subscribe("f1", noop);
     await tick();
-    expect(effectH(engine.getSnapshot("global"), "double").status).toBe("idle");
+    expect(effectHandle(engine, "f1").status).toBe("idle");
 
     engine.setValue("v1", 3);
-    expect(effectH(engine.getSnapshot("global"), "double").status).toBe(
-      "loading",
-    );
+    expect(effectHandle(engine, "f1").status).toBe("loading");
     await tick();
-    const handle = effectH(engine.getSnapshot("global"), "double");
+    const handle = effectHandle(engine, "f1");
     expect(handle.status).toBe("success");
     expect(handle.data).toBe(6);
   });
 
-  it("run(id, args) injects args and resolves with the result", async () => {
+  it("run(id, args) works without any subscription and resolves with the result", async () => {
     const engine = createEngine(
       [fn("f1", "twice", "return args * 2", { runOnDepChange: false })],
       echoQuery,
     );
-    engine.mount();
     await expect(engine.run("f1", 21)).resolves.toBe(42);
-    expect(effectH(engine.getSnapshot("global"), "twice").data).toBe(42);
+    expect(effectHandle(engine, "f1").data).toBe(42);
   });
 
-  it("lets a function write variables and cascade into dependent effects", async () => {
+  it("a manual run retains its deps and cascades into active dependent effects", async () => {
     const engine = createEngine(
       [
         variable("v1", "a", "1"),
@@ -255,11 +269,30 @@ describe("createEngine", () => {
       ],
       echoQuery,
     );
-    engine.mount();
+    engine.subscribe("f2", noop);
     await engine.run("f1");
     await tick();
-    expect(varH(engine.getSnapshot("global"), "total").value).toBe(3);
-    expect(effectH(engine.getSnapshot("global"), "report").data).toBe(4);
+    expect(varHandle(engine, "v3").value).toBe(3);
+    expect(effectHandle(engine, "f2").data).toBe(4);
+  });
+
+  it("globals stay active once touched, so state written through a temp retain persists", async () => {
+    const engine = createEngine(
+      [
+        variable("v1", "a", "1"),
+        variable("v2", "b", "2"),
+        variable("v3", "total", "0"),
+        fn("f1", "sum", "total.setValue(a.value + b.value); return null;", {
+          runOnDepChange: false,
+        }),
+      ],
+      echoQuery,
+    );
+    // No subscribers anywhere: the run temp-retains a, b, and total, and
+    // being globals they never deactivate afterwards.
+    await engine.run("f1");
+    await tick();
+    expect(varHandle(engine, "v3").value).toBe(3);
   });
 
   it("discards a superseded run's result", async () => {
@@ -270,20 +303,19 @@ describe("createEngine", () => {
       [query("q1", "q", { url: "x" }, { runOnMount: false })],
       { executeQuery: () => results.shift()! },
     );
-    engine.mount();
 
     const run1 = engine.run("q1");
     const run2 = engine.run("q1");
     second.resolve("new");
     await tick();
-    expect(effectH(engine.getSnapshot("global"), "q").data).toBe("new");
+    expect(effectHandle(engine, "q1").data).toBe("new");
 
     first.resolve("old");
     await tick();
     // The superseded run resolves for its caller but doesn't touch state.
     await expect(run1).resolves.toBe("old");
     await expect(run2).resolves.toBe("new");
-    expect(effectH(engine.getSnapshot("global"), "q").data).toBe("new");
+    expect(effectHandle(engine, "q1").data).toBe("new");
   });
 
   it("reports loading with no data and reloading over stale data", async () => {
@@ -294,20 +326,19 @@ describe("createEngine", () => {
       [query("q1", "q", { url: "x" }, { runOnMount: false })],
       { executeQuery: () => results.shift()! },
     );
-    engine.mount();
 
     void engine.run("q1");
-    expect(effectH(engine.getSnapshot("global"), "q").status).toBe("loading");
+    expect(effectHandle(engine, "q1").status).toBe("loading");
     first.resolve("data");
     await tick();
 
     void engine.run("q1");
-    const handle = effectH(engine.getSnapshot("global"), "q");
+    const handle = effectHandle(engine, "q1");
     expect(handle.status).toBe("reloading");
     expect(handle.data).toBe("data");
     second.resolve("data2");
     await tick();
-    expect(effectH(engine.getSnapshot("global"), "q").data).toBe("data2");
+    expect(effectHandle(engine, "q1").data).toBe("data2");
   });
 
   it("records a run error and keeps stale data", async () => {
@@ -322,19 +353,19 @@ describe("createEngine", () => {
       ],
       echoQuery,
     );
-    engine.mount();
+    engine.subscribe("f1", noop);
     await engine.run("f1");
-    expect(effectH(engine.getSnapshot("global"), "risky").data).toBe(1);
+    expect(effectHandle(engine, "f1").data).toBe(1);
 
     engine.setValue("v1", true);
     await tick();
-    const handle = effectH(engine.getSnapshot("global"), "risky");
+    const handle = effectHandle(engine, "f1");
     expect(handle.status).toBe("error");
     expect(handle.error).toBe("boom");
     expect(handle.data).toBe(1);
   });
 
-  it("mounts page primitives, shadows globals, and resets on unmount", async () => {
+  it("page primitives shadow globals and deactivate when their last subscriber leaves", async () => {
     const engine = createEngine(
       [
         variable("g1", "a", "1"),
@@ -344,24 +375,26 @@ describe("createEngine", () => {
       ],
       echoQuery,
     );
-    engine.mountPage("page-1");
+    const unsubscribePv = engine.subscribe("p2", noop);
+    const unsubscribeOnLoad = engine.subscribe("p3", noop);
     await tick();
 
-    const pageSnap = engine.getSnapshot("page-1");
-    expect(varH(pageSnap, "a").value).toBe(2);
-    expect(varH(pageSnap, "pv").value).toBe(3);
-    expect(effectH(pageSnap, "onLoad").data).toBe(2);
-    expect(varH(engine.getSnapshot("global"), "a").value).toBe(1);
+    // "a" resolved to the page def, which shadows the global one.
+    expect(varHandle(engine, "p1").value).toBe(2);
+    expect(varHandle(engine, "p2").value).toBe(3);
+    expect(effectHandle(engine, "p3").data).toBe(2);
+    // The global "a" was shadowed, never retained, so never evaluated.
+    expect(varHandle(engine, "g1").value).toBeUndefined();
 
-    engine.unmountPage("page-1");
-    const afterSnap = engine.getSnapshot("page-1");
-    expect(varH(afterSnap, "a").value).toBeUndefined();
-    expect(varH(afterSnap, "pv").value).toBeUndefined();
-    expect(effectH(afterSnap, "onLoad").status).toBe("idle");
-    expect(varH(engine.getSnapshot("global"), "a").value).toBe(1);
+    unsubscribePv();
+    unsubscribeOnLoad();
+    await tick();
+    expect(varHandle(engine, "p1").value).toBeUndefined();
+    expect(varHandle(engine, "p2").value).toBeUndefined();
+    expect(effectHandle(engine, "p3").status).toBe("idle");
   });
 
-  it("never computes page primitives while their page is unmounted", async () => {
+  it("never computes primitives nobody subscribed to; late activation sees current values", async () => {
     const engine = createEngine(
       [
         variable("g1", "a", "1"),
@@ -370,20 +403,74 @@ describe("createEngine", () => {
       ],
       echoQuery,
     );
-    engine.mount();
+    engine.subscribe("g1", noop);
     engine.setValue("g1", 5);
     await tick();
 
-    const snap = engine.getSnapshot("page-1");
-    expect(varH(snap, "pv").value).toBeUndefined();
-    expect(effectH(snap, "watcher").status).toBe("idle");
+    expect(varHandle(engine, "p1").value).toBeUndefined();
+    expect(effectHandle(engine, "p2").status).toBe("idle");
 
-    // Mounting later computes fresh from the current global value.
-    engine.mountPage("page-1");
-    expect(varH(engine.getSnapshot("page-1"), "pv").value).toBe(6);
+    // Subscribing later computes fresh from the current global value.
+    engine.subscribe("p1", noop);
+    expect(varHandle(engine, "p1").value).toBe(6);
   });
 
-  it("surfaces config errors in state and rejects runs", async () => {
+  it("shares a dep across subscribers and deactivates it only after the last release", async () => {
+    const executeQuery = vi.fn(
+      async (_def: QueryDef, config: Record<string, unknown>) => config,
+    );
+    const engine = createEngine(
+      [
+        query("q1", "q", { url: "x" }, {}, "page-1"),
+        fn("f1", "watchA", "return q.data", {}, "page-1"),
+        fn("f2", "watchB", "return q.data", {}, "page-1"),
+      ],
+      { executeQuery },
+    );
+    const unsubscribeA = engine.subscribe("f1", noop);
+    const unsubscribeB = engine.subscribe("f2", noop);
+    await tick();
+    // One fetch despite two dependents retaining the query.
+    expect(executeQuery).toHaveBeenCalledTimes(1);
+    expect(effectHandle(engine, "q1").status).toBe("success");
+
+    unsubscribeA();
+    await tick();
+    expect(effectHandle(engine, "q1").status).toBe("success");
+
+    unsubscribeB();
+    await tick();
+    expect(effectHandle(engine, "q1").status).toBe("idle");
+    expect(effectHandle(engine, "q1").data).toBeUndefined();
+    expect(executeQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("absorbs quick unsubscribe/resubscribe without tearing down or refetching", async () => {
+    const executeQuery = vi.fn(
+      async (_def: QueryDef, config: Record<string, unknown>) => config,
+    );
+    const engine = createEngine(
+      [query("q1", "q", { url: "x" }, {}, "page-1")],
+      { executeQuery },
+    );
+    const unsubscribe1 = engine.subscribe("q1", noop);
+    // StrictMode-style churn: release and re-retain in the same tick.
+    unsubscribe1();
+    const unsubscribe2 = engine.subscribe("q1", noop);
+    await tick();
+    expect(executeQuery).toHaveBeenCalledTimes(1);
+    expect(effectHandle(engine, "q1").status).toBe("success");
+
+    // A real departure deactivates; the next subscriber fetches fresh.
+    unsubscribe2();
+    await tick();
+    expect(effectHandle(engine, "q1").status).toBe("idle");
+    engine.subscribe("q1", noop);
+    await tick();
+    expect(executeQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces config errors in state and rejects runs; cyclic defs are safe to subscribe", async () => {
     const engine = createEngine(
       [
         variable("v1", "a", "{{b.value}}"),
@@ -392,10 +479,28 @@ describe("createEngine", () => {
       ],
       echoQuery,
     );
-    engine.mount();
-    expect(varH(engine.getSnapshot("global"), "a").error).toMatch(/cycle/);
+    expect(() => engine.subscribe("v1", noop)).not.toThrow();
+    expect(varHandle(engine, "v1").error).toMatch(/cycle/);
     await expect(engine.run("f1")).rejects.toThrow(/cycle/);
     await expect(engine.run("nope")).rejects.toThrow(/Unknown primitive/);
+    expect(() => engine.subscribe("nope", noop)).toThrow(/Unknown primitive/);
+    expect(() => engine.getHandle("nope")).toThrow(/Unknown primitive/);
+  });
+
+  it("resolves names to ids per scope, with page shadowing", () => {
+    const engine = createEngine(
+      [
+        variable("g1", "a", "1"),
+        variable("p1", "a", "2", "page-1"),
+        variable("p2", "pv", "3", "page-1"),
+      ],
+      echoQuery,
+    );
+    expect(engine.resolve("global", "a")).toBe("g1");
+    expect(engine.resolve("page-1", "a")).toBe("p1");
+    expect(engine.resolve("page-1", "pv")).toBe("p2");
+    expect(engine.resolve("global", "pv")).toBeUndefined();
+    expect(engine.resolve("page-1", "missing")).toBeUndefined();
   });
 
   it("caps dynamic dependency loops at MAX_CASCADE_DEPTH", async () => {
@@ -408,33 +513,35 @@ describe("createEngine", () => {
       ],
       echoQuery,
     );
-    engine.mount();
+    engine.subscribe("f1", noop);
+    engine.subscribe("f2", noop);
     engine.setValue("v1", 1);
 
     await vi.waitFor(() => {
-      const snap = engine.getSnapshot("global");
-      const errors = [effectH(snap, "fa").error, effectH(snap, "fb").error];
+      const errors = [
+        effectHandle(engine, "f1").error,
+        effectHandle(engine, "f2").error,
+      ];
       expect(errors.join(" ")).toMatch(/Cascade depth exceeded/);
     });
   });
 
-  it("unmount resets everything and detaches listeners", async () => {
+  it("dispose resets everything and detaches listeners", async () => {
     const listener = vi.fn();
     const engine = createEngine(
       [variable("v1", "a", "1"), query("q1", "q", { url: "x" })],
       echoQuery,
     );
-    engine.mount();
-    engine.subscribe(listener);
-    engine.unmount();
+    engine.subscribe("v1", noop);
+    engine.subscribe("q1", listener);
+    engine.dispose();
 
-    const snap = engine.getSnapshot("global");
-    expect(varH(snap, "a").value).toBeUndefined();
-    expect(effectH(snap, "q").status).toBe("idle");
+    expect(varHandle(engine, "v1").value).toBeUndefined();
+    expect(effectHandle(engine, "q1").status).toBe("idle");
 
     listener.mockClear();
     await tick(); // a settling in-flight query must be discarded silently
-    expect(effectH(engine.getSnapshot("global"), "q").status).toBe("idle");
+    expect(effectHandle(engine, "q1").status).toBe("idle");
     expect(listener).not.toHaveBeenCalled();
   });
 });

@@ -12,10 +12,16 @@ import type {
   VariableState,
 } from "./types";
 
-// A snapshot maps every primitive visible from a page (page shadows global)
-// to a handle, keyed by name. Handles keep referential identity until their
-// primitive's state changes, so useSyncExternalStore consumers and memoized
-// widgets bail out cheaply.
+// Primitives activate lazily: subscribing to (or retaining) one retains it
+// and, recursively, its static dependencies — deps first, so a variable
+// always evaluates after everything it reads. Each retained edge counts,
+// so a dep shared by two subscribers activates once and deactivates only
+// after the last release. A primitive with no retainers left deactivates
+// (state reset, in-flight runs invalidated) after a microtask; globals are
+// the exception and stay active once touched, so state written on one page
+// survives navigation to another. Handles keep referential identity until
+// their primitive's state changes, so useSyncExternalStore consumers and
+// memoized widgets bail out cheaply.
 export interface VariableHandle {
   readonly value: unknown;
   readonly error: string | null;
@@ -31,41 +37,40 @@ export interface EffectHandle {
 
 export type PrimitiveHandle = VariableHandle | EffectHandle;
 
-export type Snapshot = Record<string, PrimitiveHandle>;
-
 export interface Engine {
-  // Initial sweep of all global variables, then every global `runOnMount`
-  // effect. The initial evaluation is not a "change": `runOnDepChange`
-  // effects do not fire from it.
-  mount(): void;
+  // Subscribes to one primitive, activating it and its transitive deps.
+  // First activation evaluates variables (not a "change": `runOnDepChange`
+  // effects don't fire from it) and starts `runOnMount` effects. The
+  // listener fires once per batch in which this primitive's state changed.
+  // The returned unsubscribe releases the retain; a primitive with no
+  // retainers left deactivates a microtask later, so quick unsubscribe/
+  // resubscribe churn (React StrictMode remounts) doesn't tear down and
+  // refetch. Throws on unknown ids — `resolve` is the checked lookup.
+  subscribe(id: string, listener: () => void): () => void;
 
-  // Unmounts the previously mounted page, then sweeps the new page's
-  // variables and runs its `runOnMount` effects. Mounts globals first if
-  // `mount` was never called.
-  mountPage(pageId: string): void;
+  // Referentially stable until the primitive's state changes. Reading
+  // never activates: an inactive primitive shows its initial state.
+  getHandle(id: string): PrimitiveHandle;
 
-  // Resets the page's primitive states and discards its in-flight runs.
-  unmountPage(pageId: string): void;
-
-  // Terminal: resets all state and detaches listeners. Create a new engine
-  // to restart (defs are immutable for an engine's lifetime).
-  unmount(): void;
+  // Name → id within a page's scope (page shadows global).
+  resolve(pageId: string, name: string): string | undefined;
 
   // External write to a variable, triggering recomputation of dependent
   // variables and `runOnDepChange` effects. Last write wins: the value
-  // sticks until a later dependency change re-evaluates the variable's doc.
+  // sticks until a later dependency change re-evaluates the variable's
+  // doc. Writes to inactive variables are dropped — nothing active can
+  // observe them, and activation re-evaluates the doc anyway.
   setValue(id: string, value: unknown): void;
 
   // Manual query/function trigger; resolves with the run's result, rejects
-  // on failure. For functions, `args` is visible in the code as `args`.
+  // on failure. Works on inactive effects: their deps are retained for the
+  // run's duration so the evaluation context is fresh. For functions,
+  // `args` is visible in the code as `args`.
   run(id: string, args?: unknown): Promise<unknown>;
 
-  // useSyncExternalStore-compatible; listeners fire once per batch of
-  // changes. Returns an unsubscribe.
-  subscribe(listener: () => void): () => void;
-
-  // Referentially stable until something visible from `pageId` changes.
-  getSnapshot(pageId: string): Snapshot;
+  // Terminal: resets all state and detaches listeners. Create a new engine
+  // to restart (defs are immutable for an engine's lifetime).
+  dispose(): void;
 
   // Static errors from graph building (bad names, bad deps, cycles), by id.
   readonly configErrors: ReadonlyMap<string, string>;
@@ -116,18 +121,25 @@ export function createEngine(
   for (const def of byId.values()) states.set(def.id, initialState(def));
 
   let disposed = false;
-  let mounted = false;
-  let mountedPageId: string | undefined;
+
+  // Retain counts: direct subscribers/retains plus one per retained
+  // dependent edge (plus the permanent self-retain of a touched global).
+  // `active` tracks whether activation ran; it lags refs on the way down
+  // because deactivation is deferred, so a resubscribe arriving before the
+  // deferred teardown finds the primitive still active and skips
+  // re-activation (no refetch).
+  const refs = new Map<string, number>();
+  const active = new Set<string>();
 
   // Monotonic token per effect: a run's settlement applies only while its
-  // token is still current, so superseded runs cannot clobber newer state.
+  // token is still current, so superseded runs and runs of a since-
+  // deactivated effect cannot clobber newer state.
   const runTokens = new Map<string, number>();
 
-  const listeners = new Set<() => void>();
+  const idListeners = new Map<string, Set<() => void>>();
   const handleCache = new Map<string, PrimitiveHandle>();
-  const snapshotCache = new Map<string, Snapshot>();
   const scopeCache = new Map<string, Map<string, PrimitiveDef>>();
-  let dirty = false;
+  let dirtyIds = new Set<string>();
 
   // All engine work runs through one queue: a write arriving mid-sweep (a
   // function body calling setValue) is appended instead of re-entering, and
@@ -148,9 +160,16 @@ export function createEngine(
   }
 
   function flushNotify(): void {
-    if (!dirty) return;
-    dirty = false;
-    for (const listener of [...listeners]) listener();
+    if (dirtyIds.size === 0) return;
+    const ids = dirtyIds;
+    dirtyIds = new Set();
+    const toNotify = new Set<() => void>();
+    for (const id of ids) {
+      const set = idListeners.get(id);
+      if (!set) continue;
+      for (const listener of set) toNotify.add(listener);
+    }
+    for (const listener of toNotify) listener();
   }
 
   function initialState(def: PrimitiveDef): State {
@@ -161,12 +180,6 @@ export function createEngine(
 
   function pageOf(def: PrimitiveDef): string {
     return def.pageId ?? "global";
-  }
-
-  function isActive(def: PrimitiveDef): boolean {
-    if (disposed || !mounted) return false;
-    const page = pageOf(def);
-    return page === "global" || page === mountedPageId;
   }
 
   // Names visible from a page: globals overlaid by the page's own defs.
@@ -186,10 +199,76 @@ export function createEngine(
   function setState(id: string, next: State): void {
     states.set(id, next);
     handleCache.delete(id);
-    const page = pageOf(byId.get(id)!);
-    if (page === "global") snapshotCache.clear();
-    else snapshotCache.delete(page);
-    dirty = true;
+    dirtyIds.add(id);
+  }
+
+  function retain(id: string): void {
+    if (disposed) return;
+    refs.set(id, (refs.get(id) ?? 0) + 1);
+    if (!active.has(id)) activate(id);
+  }
+
+  function activate(id: string): void {
+    active.add(id);
+    const def = byId.get(id)!;
+    // Config-errored defs never evaluate or run, so their deps are never
+    // retained — this also keeps a dependency cycle from sustaining its
+    // own refcounts forever.
+    if (graph.configErrors.has(id)) return;
+    // Globals never deactivate once activated (permanent self-retain), so
+    // state written by one page's widgets survives navigation to another.
+    if (pageOf(def) === "global") refs.set(id, (refs.get(id) ?? 0) + 1);
+    for (const dep of graph.deps.get(id) ?? EMPTY_SET) retain(dep);
+    if (def.kind === "variable") {
+      // Initial evaluation is not a "change": effects don't fire from it.
+      evaluateVariable(def);
+    } else if (def.runOnMount) {
+      startRun(def, undefined, 0).catch(() => {
+        // Auto-triggered runs report failures through state, not rejection.
+      });
+    }
+  }
+
+  function release(id: string): void {
+    const count = refs.get(id) ?? 0;
+    if (count <= 0) return;
+    refs.set(id, count - 1);
+    if (count === 1) {
+      // Deferred so quick unsubscribe/resubscribe churn (React StrictMode
+      // remounts, list virtualization) doesn't tear down and refetch.
+      queueMicrotask(() => schedule(() => deactivate(id)));
+    }
+  }
+
+  function deactivate(id: string): void {
+    if (disposed || (refs.get(id) ?? 0) > 0 || !active.has(id)) return;
+    active.delete(id);
+    // Invalidate in-flight runs so they settle as stale.
+    runTokens.set(id, (runTokens.get(id) ?? 0) + 1);
+    setState(id, initialState(byId.get(id)!));
+    if (!graph.configErrors.has(id)) {
+      for (const dep of graph.deps.get(id) ?? EMPTY_SET) release(dep);
+    }
+  }
+
+  function subscribe(id: string, listener: () => void): () => void {
+    if (!byId.has(id)) {
+      throw new Error(
+        graph.configErrors.get(id) ?? `Unknown primitive "${id}"`,
+      );
+    }
+    if (disposed) return () => {};
+    let set = idListeners.get(id);
+    if (!set) idListeners.set(id, (set = new Set()));
+    set.add(listener);
+    schedule(() => retain(id));
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      idListeners.get(id)?.delete(listener);
+      schedule(() => release(id));
+    };
   }
 
   // Read-only evaluation context for templates: raw state objects keyed by
@@ -201,10 +280,10 @@ export function createEngine(
     return ctx;
   }
 
-  // Rich context/snapshot handle: state plus callables. Callables carry the
-  // creating run's `depth` so a dynamic loop (f1's write re-runs f2, whose
-  // write re-runs f1) deepens the cascade until MAX_CASCADE_DEPTH instead of
-  // looping forever. Snapshot handles are created at depth 0.
+  // Rich handle: state plus callables. Callables carry the creating run's
+  // `depth` so a dynamic loop (f1's write re-runs f2, whose write re-runs
+  // f1) deepens the cascade until MAX_CASCADE_DEPTH instead of looping
+  // forever. Handles handed out through the public API are at depth 0.
   function makeHandle(def: PrimitiveDef, depth: number): PrimitiveHandle {
     if (def.kind === "variable") {
       const state = states.get(def.id) as VariableState;
@@ -224,7 +303,7 @@ export function createEngine(
     };
   }
 
-  function snapshotHandle(id: string): PrimitiveHandle {
+  function cachedHandle(id: string): PrimitiveHandle {
     const cached = handleCache.get(id);
     if (cached) return cached;
     const handle = makeHandle(byId.get(id)!, 0);
@@ -264,7 +343,9 @@ export function createEngine(
   // Recomputes the `recompute` variables plus everything downstream of them
   // or of `written` — ids whose values were already updated in place and
   // must NOT be re-evaluated (last write wins until a later dep change) —
-  // in topological order. Returns every id whose value changed.
+  // in topological order. Returns every id whose value changed. Inactive
+  // variables are skipped: they re-evaluate fresh on activation, and the
+  // retain invariant guarantees no active primitive reads them meanwhile.
   function sweepVariables(
     recompute: ReadonlySet<string>,
     written: ReadonlySet<string>,
@@ -279,7 +360,7 @@ export function createEngine(
         return (
           def !== undefined &&
           def.kind === "variable" &&
-          isActive(def) &&
+          active.has(id) &&
           !graph.configErrors.has(id) &&
           orderIndex.has(id)
         );
@@ -303,7 +384,7 @@ export function createEngine(
         const def = byId.get(dependentId);
         if (!def || def.kind === "variable") continue;
         if (!def.runOnDepChange) continue;
-        if (!isActive(def) || graph.configErrors.has(def.id)) continue;
+        if (!active.has(def.id) || graph.configErrors.has(def.id)) continue;
         scheduled.add(dependentId);
         startRun(def, undefined, depth).catch(() => {
           // Auto-triggered runs report failures through state, not rejection.
@@ -318,7 +399,7 @@ export function createEngine(
   function writeValue(id: string, value: unknown, depth: number): void {
     schedule(() => {
       const def = byId.get(id);
-      if (!def || def.kind !== "variable" || !isActive(def)) return;
+      if (!def || def.kind !== "variable" || !active.has(id)) return;
       const prev = states.get(id) as VariableState;
       if (Object.is(prev.value, value)) return;
       setState(id, { value, error: graph.configErrors.get(id) ?? null });
@@ -333,13 +414,13 @@ export function createEngine(
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       schedule(() => {
+        if (disposed) {
+          reject(new Error("Engine is disposed"));
+          return;
+        }
         const configError = graph.configErrors.get(def.id);
         if (configError !== undefined) {
           reject(new Error(configError));
-          return;
-        }
-        if (!isActive(def)) {
-          reject(new Error(`"${def.name}" is not mounted`));
           return;
         }
         if (depth > MAX_CASCADE_DEPTH) {
@@ -351,6 +432,19 @@ export function createEngine(
           reject(new Error(message));
           return;
         }
+
+        // An inactive effect can still run: its deps are retained for the
+        // run's duration so the evaluation context is fresh.
+        const tempDeps: string[] = [];
+        if (!active.has(def.id)) {
+          for (const dep of graph.deps.get(def.id) ?? EMPTY_SET) {
+            retain(dep);
+            tempDeps.push(dep);
+          }
+        }
+        const releaseTempDeps = () => {
+          for (const dep of tempDeps) release(dep);
+        };
 
         const token = (runTokens.get(def.id) ?? 0) + 1;
         runTokens.set(def.id, token);
@@ -364,11 +458,17 @@ export function createEngine(
 
         execute(def, args, depth).then(
           (result) => {
-            schedule(() => settle(def, token, { ok: true, value: result }, depth));
+            schedule(() => {
+              settle(def, token, { ok: true, value: result }, depth);
+              releaseTempDeps();
+            });
             resolve(result);
           },
           (error: unknown) => {
-            schedule(() => settle(def, token, { ok: false, error }, depth));
+            schedule(() => {
+              settle(def, token, { ok: false, error }, depth);
+              releaseTempDeps();
+            });
             reject(error instanceof Error ? error : new Error(String(error)));
           },
         );
@@ -382,8 +482,9 @@ export function createEngine(
     outcome: RunOutcome,
     depth: number,
   ): void {
-    if (runTokens.get(def.id) !== token) return; // superseded by a newer run
-    if (!isActive(def)) return; // unmounted while in flight
+    // Deactivation and disposal bump the token, so a run that outlived its
+    // effect's retention settles as stale here.
+    if (runTokens.get(def.id) !== token) return;
     const prev = states.get(def.id) as EffectState;
     if (!outcome.ok) {
       // Keep stale data on error so widgets don't blank out.
@@ -441,88 +542,32 @@ export function createEngine(
     return value;
   }
 
-  function sweepScope(pageId: string): void {
-    const ids = new Set<string>();
-    for (const def of byId.values()) {
-      if (def.kind === "variable" && pageOf(def) === pageId) ids.add(def.id);
-    }
-    // Initial evaluation is not a "change": effects don't fire from it.
-    sweepVariables(ids, EMPTY_SET);
-  }
-
-  function runMountEffects(pageId: string): void {
-    for (const def of byId.values()) {
-      if (def.kind === "variable" || pageOf(def) !== pageId) continue;
-      if (!def.runOnMount || graph.configErrors.has(def.id)) continue;
-      startRun(def, undefined, 0).catch(() => {});
-    }
-  }
-
-  function resetScope(pageId: string): void {
-    for (const def of byId.values()) {
-      if (pageOf(def) !== pageId) continue;
-      // Invalidate in-flight runs so they settle as stale.
-      runTokens.set(def.id, (runTokens.get(def.id) ?? 0) + 1);
-      setState(def.id, initialState(def));
-    }
-  }
-
-  function mount(): void {
-    if (disposed || mounted) return;
-    mounted = true;
-    schedule(() => {
-      sweepScope("global");
-      runMountEffects("global");
-    });
-  }
-
-  function mountPage(pageId: string): void {
-    if (disposed || pageId === "global") return;
-    if (!mounted) mount();
-    if (mountedPageId === pageId) return;
-    if (mountedPageId !== undefined) unmountPage(mountedPageId);
-    mountedPageId = pageId;
-    schedule(() => {
-      sweepScope(pageId);
-      runMountEffects(pageId);
-    });
-  }
-
-  function unmountPage(pageId: string): void {
-    if (disposed || pageId === "global") return;
-    if (mountedPageId === pageId) mountedPageId = undefined;
-    schedule(() => resetScope(pageId));
-  }
-
-  function unmount(): void {
+  function dispose(): void {
     if (disposed) return;
     disposed = true;
-    mounted = false;
-    mountedPageId = undefined;
+    refs.clear();
+    active.clear();
     for (const def of byId.values()) {
       runTokens.set(def.id, (runTokens.get(def.id) ?? 0) + 1);
       setState(def.id, initialState(def));
     }
     flushNotify();
-    listeners.clear();
-  }
-
-  function getSnapshot(pageId: string): Snapshot {
-    const cached = snapshotCache.get(pageId);
-    if (cached) return cached;
-    const snapshot: Snapshot = {};
-    for (const [name, def] of scopeFor(pageId)) {
-      snapshot[name] = snapshotHandle(def.id);
-    }
-    snapshotCache.set(pageId, snapshot);
-    return snapshot;
+    idListeners.clear();
   }
 
   return {
-    mount,
-    mountPage,
-    unmountPage,
-    unmount,
+    subscribe,
+    getHandle(id) {
+      if (!byId.has(id)) {
+        throw new Error(
+          graph.configErrors.get(id) ?? `Unknown primitive "${id}"`,
+        );
+      }
+      return cachedHandle(id);
+    },
+    resolve(pageId, name) {
+      return scopeFor(pageId).get(name)?.id;
+    },
     setValue(id, value) {
       const def = byId.get(id);
       if (!def) {
@@ -549,11 +594,7 @@ export function createEngine(
       }
       return startRun(def, args, 0);
     },
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    getSnapshot,
+    dispose,
     configErrors: graph.configErrors,
   };
 }
