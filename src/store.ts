@@ -6,6 +6,7 @@ import type { PrimitiveDef } from "./lib/engine/types";
 interface PageRecord {
   id: string;
   name: string;
+  index?: boolean;
 }
 
 interface WidgetConfig {
@@ -47,6 +48,7 @@ interface Actions {
   closeInspector: () => void;
   deletePage: (pageId: string) => void;
   selectViewPrimitive: (viewPrimitive: ViewPrimitive | null) => void;
+  setHomePage: (pageId: string) => void;
 }
 
 interface StoreState extends State, Actions {}
@@ -123,6 +125,13 @@ export const useAppStore = create<StoreState>()(
           state.viewPrimitive = viewPrimitive;
           state.allotmentVisibility.inspector = true;
           state.view = "primitives";
+        }),
+      setHomePage: (pageId) =>
+        set((state) => {
+          state.pages = state.pages.map((p) => ({
+            ...p,
+            index: p.id === pageId,
+          }));
         }),
     })),
     {
