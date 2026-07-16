@@ -19,6 +19,7 @@ export function Sidebar({ className, ...props }: SidebarProps) {
 
 function View() {
   const selectedView = useAppStore((state) => state.view);
+
   if (selectedView === "pages") {
     return <PagesView />;
   }

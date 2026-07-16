@@ -35,12 +35,18 @@ export function PageSelect({ className, ...props }: PageSelectProps) {
     ...pages,
   ];
 
+  function handlePageChange(value: string | null) {
+    navigate(value === "readme" ? "/" : `/${value}`);
+    const view = useAppStore.getState().view;
+    if (value === "readme" && view !== "pages") {
+      useAppStore.setState({ view: "pages" });
+    }
+  }
+
   return (
     <div className={twMerge("", className)} {...props}>
       <Select
-        onValueChange={(value) => {
-          navigate(value === "readme" ? "/" : `/${value}`);
-        }}
+        onValueChange={handlePageChange}
         value={currentPage?.id || "readme"}
       >
         <SelectTrigger className="w-full">
