@@ -39,9 +39,9 @@ interface State {
   readme: string;
   view: string;
   allotmentVisibility: {
-    sidebar: boolean;
-    inspector: boolean;
-    configuration: boolean;
+    toolRail: boolean;
+    explorer: boolean;
+    editor: boolean;
   };
   primitiveEditorView: PrimitiveEditorView | null;
 }
@@ -55,8 +55,8 @@ interface Actions {
   removePrimitive: (primitiveId: string) => void;
   setReadme: (readme: string) => void;
   selectView: (view: string) => void;
-  openInspector: () => void;
-  closeInspector: () => void;
+  openEditor: () => void;
+  closeEditor: () => void;
   deletePage: (pageId: string) => void;
   setHomePage: (pageId: string) => void;
   setPrimitiveEditorView: (viewPrimitive: PrimitiveEditorView | null) => void;
@@ -72,9 +72,9 @@ const initialState: State = {
   view: "widgets",
   primitiveEditorView: null,
   allotmentVisibility: {
-    sidebar: true,
-    inspector: false,
-    configuration: false,
+    toolRail: true,
+    explorer: false,
+    editor: false,
   },
 };
 
@@ -116,16 +116,17 @@ export const useAppStore = create<StoreState>()(
       selectView: (view) =>
         set((state) => {
           state.view = view;
-          state.allotmentVisibility.inspector =
-            state.allotmentVisibility.inspector && view === "primitives";
+          state.allotmentVisibility.editor =
+            state.allotmentVisibility.editor && view === "primitives";
         }),
-      openInspector: () =>
+      openEditor: () =>
         set((state) => {
-          state.allotmentVisibility.inspector = true;
+          state.allotmentVisibility.editor = true;
         }),
-      closeInspector: () =>
+      closeEditor: () =>
         set((state) => {
-          state.allotmentVisibility.inspector = false;
+          state.allotmentVisibility.editor = false;
+          state.primitiveEditorView = null;
         }),
       deletePage: (pageId) =>
         set((state) => {
@@ -134,7 +135,7 @@ export const useAppStore = create<StoreState>()(
       setPrimitiveEditorView: (viewPrimitive) =>
         set((state) => {
           state.primitiveEditorView = viewPrimitive;
-          state.allotmentVisibility.inspector = !!viewPrimitive;
+          state.allotmentVisibility.editor = !!viewPrimitive;
         }),
       setHomePage: (pageId) =>
         set((state) => {
