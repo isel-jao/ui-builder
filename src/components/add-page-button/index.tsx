@@ -65,13 +65,17 @@ export function AddPageButton() {
             Add a new page to your application.
           </DialogDescription>
         </DialogHeader>
-        <form className="grid gap-4 py-4" onSubmit={handleSubmit}>
+        <form className="flex flex-col gap-4 " onSubmit={handleSubmit}>
           <Label htmlFor="name" className="text-right">
             Name
           </Label>
           <Input id="name" name="name" className="col-span-3" />
-          <DialogClose ref={closeRef}>Cancel</DialogClose>
-          <Button type="submit">Add Page</Button>
+          <div className="flex justify-end  gap-2 *:w-24">
+            <DialogClose ref={closeRef} render={<Button variant={"outline"} />}>
+              Cancel
+            </DialogClose>
+            <Button type="submit">Add Page</Button>
+          </div>
         </form>
       </DialogContent>
     </Dialog>

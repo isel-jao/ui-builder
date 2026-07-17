@@ -1,13 +1,20 @@
 import { useAppStore } from "@/store";
 import { VariableEditor } from "./variable-editor";
 import { FunctionEditor } from "./function-editor";
+import { useShallow } from "zustand/shallow";
 
 export function PrimitiveEditor() {
-  const primitiveEditorView = useAppStore((state) => state.primitiveEditorView);
+  const { primitiveEditorView } = useAppStore(
+    useShallow((state) => ({
+      primitiveEditorView: state.primitiveEditorView,
+    })),
+  );
+
   if (!primitiveEditorView) {
     return null;
   }
-  const { kind, scope } = primitiveEditorView;
+
+  const { kind, scope } = primitiveEditorView.data;
 
   if (kind === "variable") {
     return <VariableEditor scope={scope} />;

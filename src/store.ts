@@ -1,16 +1,15 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
-import type { PrimitiveDef } from "./lib/engine/types";
+import type { PrimitiveDef, PrimitiveKind } from "./lib/engine/types";
 
 interface PageRecord {
   id: string;
   name: string;
   index?: boolean;
 }
-
-type PrimitiveEditorView = {
-  kind: "variable" | "function";
+type NewPrimitiveData = {
+  kind: PrimitiveKind;
 } & (
   | {
       scope: "global";
@@ -20,6 +19,16 @@ type PrimitiveEditorView = {
       pageId: string;
     }
 );
+
+type PrimitiveEditorView =
+  | {
+      mode: "add";
+      data: NewPrimitiveData;
+    }
+  | {
+      mode: "edit";
+      data: PrimitiveDef;
+    };
 
 interface WidgetConfig {
   widgetId: string;
@@ -44,6 +53,7 @@ interface State {
     editor: boolean;
   };
   primitiveEditorView: PrimitiveEditorView | null;
+  editPrimitiveId: string | null;
 }
 
 interface Actions {
@@ -52,6 +62,10 @@ interface Actions {
   addWidget: (widget: WidgetConfig) => void;
   removeWidget: (widgetId: string) => void;
   addPrimitive: (primitive: PrimitiveRecord) => void;
+  editPrimitive: (
+    primitiveId: string,
+    updatedPrimitive: Partial<PrimitiveRecord>,
+  ) => void;
   removePrimitive: (primitiveId: string) => void;
   setReadme: (readme: string) => void;
   selectView: (view: string) => void;
@@ -65,17 +79,24 @@ interface Actions {
 interface StoreState extends State, Actions {}
 
 const initialState: State = {
-  pages: [],
+  pages: [
+    {
+      id: "home",
+      name: "Home",
+      index: true,
+    },
+  ],
   widgets: [],
   primitives: [],
   readme: "",
-  view: "widgets",
+  view: "pages",
   primitiveEditorView: null,
   allotmentVisibility: {
     toolRail: true,
-    explorer: false,
+    explorer: true,
     editor: false,
   },
+  editPrimitiveId: null,
 };
 
 export const useAppStore = create<StoreState>()(
@@ -102,6 +123,17 @@ export const useAppStore = create<StoreState>()(
         set((state) => {
           state.primitives.push(primitive);
           state.primitiveEditorView = null;
+        }),
+      editPrimitive: (primitiveId, updatedPrimitive) =>
+        set((state) => {
+          const targetPrimitive = state.primitives.find(
+            (p) => p.id === primitiveId,
+          );
+          if (targetPrimitive) {
+            Object.assign(targetPrimitive, updatedPrimitive);
+          }
+          state.primitiveEditorView = null;
+          state.editPrimitiveId = null;
         }),
       removePrimitive: (primitiveId) =>
         set((state) => {
@@ -147,6 +179,12 @@ export const useAppStore = create<StoreState>()(
     })),
     {
       name: "app",
+      partialize: (state) => ({
+        pages: state.pages,
+        readme: state.readme,
+        primitives: state.primitives,
+        editPrimitiveId: state.editPrimitiveId,
+      }),
     },
   ),
 );

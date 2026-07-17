@@ -26,11 +26,11 @@ export function PagesView({ className, ...props }: PagesViewProps) {
   const { pages, deletePage, setHomePage } = useAppStore(
     useShallow((state) => ({
       pages: state.pages,
-      addPage: state.addPage,
       deletePage: state.deletePage,
       setHomePage: state.setHomePage,
     })),
   );
+
   function handleDeletePage(
     e: React.MouseEvent<HTMLButtonElement, MouseEvent>,
   ) {

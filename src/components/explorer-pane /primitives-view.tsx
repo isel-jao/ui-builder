@@ -15,20 +15,23 @@ import { PrimitiveItem } from "./primitive-item";
 
 function Menu({ scope }: { scope: "global" | "page" }) {
   const pageId = useParams<{ pageId: string }>().pageId;
-  const setPrimitiveEditorView = useAppStore(
-    (state) => state.setPrimitiveEditorView,
-  );
 
   function handleClick(e: React.MouseEvent<HTMLDivElement, MouseEvent>) {
-    const kind = e.currentTarget.dataset.kind as "global" | "page";
-    if (kind === "global") {
-      setPrimitiveEditorView({ kind: "variable", scope: "global" });
+    const kind = e.currentTarget.dataset.kind as "variable" | "function";
+    if (scope === "global") {
+      useAppStore.getState().setPrimitiveEditorView({
+        mode: "add",
+        data: { kind, scope: "global" },
+      });
       return;
     }
-    if (kind === "page") {
+    if (scope === "page") {
       if (!pageId) return toast.error("No page selected");
 
-      setPrimitiveEditorView({ kind: "variable", scope: "page", pageId });
+      useAppStore.getState().setPrimitiveEditorView({
+        mode: "add",
+        data: { kind, scope: "page", pageId },
+      });
     }
   }
 
@@ -43,10 +46,10 @@ function Menu({ scope }: { scope: "global" | "page" }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuGroup>
-          <DropdownMenuItem data-kind={scope} onClick={handleClick}>
+          <DropdownMenuItem data-kind="variable" onClick={handleClick}>
             Variable
           </DropdownMenuItem>
-          <DropdownMenuItem data-kind={scope} onClick={handleClick}>
+          <DropdownMenuItem data-kind="function" onClick={handleClick}>
             Function
           </DropdownMenuItem>
         </DropdownMenuGroup>

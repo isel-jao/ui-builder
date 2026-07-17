@@ -47,7 +47,7 @@ export default function AppLayoutLayout() {
         </Allotment.Pane>
         <Allotment.Pane
           minSize={250}
-          maxSize={250}
+          maxSize={300}
           preferredSize={250}
           snap
           visible={allotmentVisibility.explorer}
@@ -57,8 +57,8 @@ export default function AppLayoutLayout() {
         ``
         <Allotment.Pane
           minSize={400}
-          preferredSize={400}
-          maxSize={400}
+          preferredSize={450}
+          maxSize={500}
           snap
           visible={allotmentVisibility.editor && primitiveEditorView !== null}
         >

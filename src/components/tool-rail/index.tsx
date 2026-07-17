@@ -34,7 +34,7 @@ export function ToolRail({ className, ...props }: ToolRailProps) {
   return (
     <div
       className={twMerge(
-        "bg-card h-full flex flex-col items-center gap-2 py-2",
+        "bg-card h-full flex flex-col items-center gap-1 py-4",
         className,
       )}
       {...props}
