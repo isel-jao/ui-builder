@@ -30,7 +30,7 @@ export function Header({ className, ...props }: HeaderProps) {
     </div>
   );
 }
-export default function PageLayout() {
+export default function AppLayoutLayout() {
   const allotmentVisibility = useAppStore((state) => state.allotmentVisibility);
   return (
     <main className="flex flex-col">

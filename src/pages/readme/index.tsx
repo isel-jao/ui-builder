@@ -2,7 +2,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAppStore } from "@/store";
 import { useStore } from "zustand";
 
-export default function HomePage() {
+export default function ReadmePage() {
   const readme = useStore(useAppStore, (state) => state.readme);
   const setReadme = useStore(useAppStore, (state) => state.setReadme);
   function handleChange(event: React.ChangeEvent<HTMLTextAreaElement>) {
