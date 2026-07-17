@@ -9,6 +9,18 @@ interface PageRecord {
   index?: boolean;
 }
 
+type PrimitiveEditorView = {
+  kind: "variable" | "function";
+} & (
+  | {
+      scope: "global";
+    }
+  | {
+      scope: "page";
+      pageId: string;
+    }
+);
+
 interface WidgetConfig {
   widgetId: string;
   widgetName: string;
@@ -20,7 +32,6 @@ type PrimitiveRecord = PrimitiveDef & {
   pageId?: string;
 };
 
-type ViewPrimitive = `${"variable" | "function"}-${"global" | "page"}`;
 interface State {
   pages: PageRecord[];
   widgets: WidgetConfig[];
@@ -32,7 +43,7 @@ interface State {
     inspector: boolean;
     configuration: boolean;
   };
-  viewPrimitive: ViewPrimitive | null;
+  primitiveEditorView: PrimitiveEditorView | null;
 }
 
 interface Actions {
@@ -47,8 +58,8 @@ interface Actions {
   openInspector: () => void;
   closeInspector: () => void;
   deletePage: (pageId: string) => void;
-  selectViewPrimitive: (viewPrimitive: ViewPrimitive | null) => void;
   setHomePage: (pageId: string) => void;
+  setPrimitiveEditorView: (viewPrimitive: PrimitiveEditorView | null) => void;
 }
 
 interface StoreState extends State, Actions {}
@@ -59,7 +70,7 @@ const initialState: State = {
   primitives: [],
   readme: "",
   view: "widgets",
-  viewPrimitive: null,
+  primitiveEditorView: null,
   allotmentVisibility: {
     sidebar: true,
     inspector: false,
@@ -90,7 +101,7 @@ export const useAppStore = create<StoreState>()(
       addPrimitive: (primitive) =>
         set((state) => {
           state.primitives.push(primitive);
-          state.viewPrimitive = null;
+          state.primitiveEditorView = null;
         }),
       removePrimitive: (primitiveId) =>
         set((state) => {
@@ -120,11 +131,10 @@ export const useAppStore = create<StoreState>()(
         set((state) => {
           state.pages = state.pages.filter((p) => p.id !== pageId);
         }),
-      selectViewPrimitive: (viewPrimitive) =>
+      setPrimitiveEditorView: (viewPrimitive) =>
         set((state) => {
-          state.viewPrimitive = viewPrimitive;
-          state.allotmentVisibility.inspector = true;
-          state.view = "primitives";
+          state.primitiveEditorView = viewPrimitive;
+          state.allotmentVisibility.inspector = !!viewPrimitive;
         }),
       setHomePage: (pageId) =>
         set((state) => {

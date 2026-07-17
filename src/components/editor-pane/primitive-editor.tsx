@@ -3,8 +3,11 @@ import { VariableEditor } from "./variable-editor";
 import { FunctionEditor } from "./function-editor";
 
 export function PrimitiveEditor() {
-  const primitiveView = useAppStore((state) => state.viewPrimitive);
-  const [kind, scope = "global"] = primitiveView?.split("-") || [];
+  const primitiveEditorView = useAppStore((state) => state.primitiveEditorView);
+  if (!primitiveEditorView) {
+    return null;
+  }
+  const { kind, scope } = primitiveEditorView;
 
   if (kind === "variable") {
     return <VariableEditor scope={scope} />;
@@ -12,5 +15,5 @@ export function PrimitiveEditor() {
   if (kind === "function") {
     return <FunctionEditor scope={scope} />;
   }
-  return <div>{primitiveView} not implemented yet</div>;
+  return <div>{`${kind}-${scope}`} not implemented yet</div>;
 }

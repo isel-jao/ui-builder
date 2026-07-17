@@ -40,8 +40,8 @@ export default function AppLayoutLayout() {
           <ToolRail />
         </Allotment.Pane>
         <Allotment.Pane
-          minSize={200}
-          maxSize={300}
+          minSize={250}
+          maxSize={250}
           preferredSize={250}
           snap
           visible={allotmentVisibility.sidebar}
@@ -50,7 +50,8 @@ export default function AppLayoutLayout() {
         </Allotment.Pane>
         <Allotment.Pane
           minSize={200}
-          maxSize={300}
+          preferredSize={400}
+          maxSize={400}
           snap
           visible={allotmentVisibility.inspector}
         >

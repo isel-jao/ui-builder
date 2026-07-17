@@ -13,10 +13,25 @@ import { useParams } from "react-router";
 import { useShallow } from "zustand/shallow";
 import { PrimitiveItem } from "./primitive-item";
 
-function Menu({ scop }: { scop: "global" | "page" }) {
-  const selectedViewPrimitive = useAppStore(
-    (state) => state.selectViewPrimitive,
+function Menu({ scope }: { scope: "global" | "page" }) {
+  const pageId = useParams<{ pageId: string }>().pageId;
+  const setPrimitiveEditorView = useAppStore(
+    (state) => state.setPrimitiveEditorView,
   );
+
+  function handleClick(e: React.MouseEvent<HTMLDivElement, MouseEvent>) {
+    const kind = e.currentTarget.dataset.kind as "global" | "page";
+    if (kind === "global") {
+      setPrimitiveEditorView({ kind: "variable", scope: "global" });
+      return;
+    }
+    if (kind === "page") {
+      if (!pageId) return toast.error("No page selected");
+
+      setPrimitiveEditorView({ kind: "variable", scope: "page", pageId });
+    }
+  }
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -28,14 +43,10 @@ function Menu({ scop }: { scop: "global" | "page" }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuGroup>
-          <DropdownMenuItem
-            onClick={() => selectedViewPrimitive(`variable-${scop}` as any)}
-          >
+          <DropdownMenuItem data-kind={scope} onClick={handleClick}>
             Variable
           </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={() => selectedViewPrimitive(`function-${scop}` as any)}
-          >
+          <DropdownMenuItem data-kind={scope} onClick={handleClick}>
             Function
           </DropdownMenuItem>
         </DropdownMenuGroup>
@@ -59,14 +70,14 @@ export function PrimitivesView() {
       <Allotment.Pane minSize={200}>
         <div className="flex items-center p-2">
           <span className="font-bold capitalize">global</span>
-          <Menu scop="global" />
+          <Menu scope="global" />
         </div>
         <PrimitiveList primitives={globalPrimitives} scope="global" />
       </Allotment.Pane>
       <Allotment.Pane minSize={200}>
         <div className="flex items-center p-2">
           <span className="font-bold capitalize">page</span>
-          <Menu scop="page" />
+          <Menu scope="page" />
         </div>
         <PrimitiveList primitives={pagePrimitives} scope="page" />
       </Allotment.Pane>
@@ -77,6 +88,7 @@ export function PrimitivesView() {
 import React from "react";
 import { twMerge } from "tailwind-merge";
 import type { PrimitiveDef } from "@/lib/engine/types";
+import { toast } from "sonner";
 
 interface PrimitiveListProps extends Omit<
   React.HTMLAttributes<HTMLElement>,
