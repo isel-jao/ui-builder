@@ -8,6 +8,7 @@ import { useAppStore } from "@/store";
 import { ToolRail } from "@/components/tool-rail";
 import { EditorPane } from "@/components/editor-pane";
 import { ExplorerPane } from "@/components/explorer-pane ";
+import { useShallow } from "zustand/shallow";
 
 interface HeaderProps extends Omit<
   React.HTMLAttributes<HTMLElement>,
@@ -31,7 +32,12 @@ export function Header({ className, ...props }: HeaderProps) {
   );
 }
 export default function AppLayoutLayout() {
-  const allotmentVisibility = useAppStore((state) => state.allotmentVisibility);
+  const { allotmentVisibility, primitiveEditorView } = useAppStore(
+    useShallow((state) => ({
+      allotmentVisibility: state.allotmentVisibility,
+      primitiveEditorView: state.primitiveEditorView,
+    })),
+  );
   return (
     <main className="flex flex-col">
       <Header />
@@ -44,16 +50,17 @@ export default function AppLayoutLayout() {
           maxSize={250}
           preferredSize={250}
           snap
-          visible={allotmentVisibility.sidebar}
+          visible={allotmentVisibility.explorer}
         >
           <ExplorerPane />
         </Allotment.Pane>
+        ``
         <Allotment.Pane
-          minSize={200}
+          minSize={400}
           preferredSize={400}
           maxSize={400}
           snap
-          visible={allotmentVisibility.inspector}
+          visible={allotmentVisibility.editor && primitiveEditorView !== null}
         >
           <EditorPane />
         </Allotment.Pane>
