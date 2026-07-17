@@ -1,18 +1,19 @@
 import React from "react";
 import { twMerge } from "tailwind-merge";
+import { PrimitiveEditor } from "./primitive-editor";
 
-interface ConfigurationProps extends Omit<
+interface EditorPaneProps extends Omit<
   React.HTMLAttributes<HTMLElement>,
   "children"
 > {}
 
-export function Configuration({ className, ...props }: ConfigurationProps) {
+export function EditorPane({ className, ...props }: EditorPaneProps) {
   return (
     <div
       className={twMerge("bg-card h-full flex flex-col p-2", className)}
       {...props}
     >
-      configuration
+      <PrimitiveEditor />
     </div>
   );
 }

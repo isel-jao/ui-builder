@@ -7,16 +7,12 @@ import React from "react";
 import { twMerge } from "tailwind-merge";
 import { useNavigate, useParams } from "react-router";
 
-interface MiniSidebarProps extends Omit<
+interface ToolRailProps extends Omit<
   React.HTMLAttributes<HTMLElement>,
   "children"
 > {}
 
-const selectView = (view: string) => {
-  useAppStore.getState().selectView(view);
-};
-
-export function MinSideBar({ className, ...props }: MiniSidebarProps) {
+export function ToolRail({ className, ...props }: ToolRailProps) {
   const selectedView = useAppStore((state) => state.view);
   const { pageId } = useParams<{ pageId: string }>();
   const navigate = useNavigate();

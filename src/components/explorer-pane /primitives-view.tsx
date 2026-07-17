@@ -1,6 +1,6 @@
 import { Allotment } from "allotment";
 import { Button } from "../ui/button";
-import { CodeIcon, DatabaseIcon, PlusIcon, VariableIcon } from "lucide-react";
+import { PlusIcon } from "lucide-react";
 import { useAppStore } from "@/store";
 import {
   DropdownMenu,

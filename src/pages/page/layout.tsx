@@ -4,11 +4,10 @@ import { Allotment } from "allotment";
 
 import React from "react";
 import { twMerge } from "tailwind-merge";
-import { MinSideBar } from "@/components/mini-sidebar";
-import { Sidebar } from "@/components/sidebar";
-import { Inspector } from "@/components/inspector";
-import { Configuration } from "@/components/configuration";
 import { useAppStore } from "@/store";
+import { ToolRail } from "@/components/tool-rail";
+import { EditorPane } from "@/components/editor-pane";
+import { ExplorerPane } from "@/components/explorer-pane ";
 
 interface HeaderProps extends Omit<
   React.HTMLAttributes<HTMLElement>,
@@ -38,15 +37,16 @@ export default function PageLayout() {
       <Header />
       <Allotment>
         <Allotment.Pane minSize={46} maxSize={46}>
-          <MinSideBar />
+          <ToolRail />
         </Allotment.Pane>
         <Allotment.Pane
           minSize={200}
-          maxSize={250}
+          maxSize={300}
+          preferredSize={250}
           snap
           visible={allotmentVisibility.sidebar}
         >
-          <Sidebar />
+          <ExplorerPane />
         </Allotment.Pane>
         <Allotment.Pane
           minSize={200}
@@ -54,18 +54,10 @@ export default function PageLayout() {
           snap
           visible={allotmentVisibility.inspector}
         >
-          <Inspector />
+          <EditorPane />
         </Allotment.Pane>
         <Allotment.Pane>
           <Outlet />
-        </Allotment.Pane>
-        <Allotment.Pane
-          minSize={200}
-          maxSize={200}
-          snap
-          visible={allotmentVisibility.configuration}
-        >
-          <Configuration />
         </Allotment.Pane>
       </Allotment>
     </main>

@@ -4,12 +4,12 @@ import { twMerge } from "tailwind-merge";
 import { PagesView } from "./pages-view";
 import { PrimitivesView } from "./primitives-view";
 
-interface SidebarProps extends Omit<
+interface ExplorerPaneProps extends Omit<
   React.HTMLAttributes<HTMLElement>,
   "children"
 > {}
 
-export function Sidebar({ className, ...props }: SidebarProps) {
+export function ExplorerPane({ className, ...props }: ExplorerPaneProps) {
   return (
     <div className={twMerge("bg-card h-full p-2", className)} {...props}>
       <View />

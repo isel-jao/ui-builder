@@ -40,4 +40,9 @@ export function createEngine(defs: PrimitiveDef[], options: EngineOptions) {
   let sweeping = false;
   let mounted = false;
   let mountedPageId: string | undefined;
+  void graph;
+  void disposed;
+  void sweeping;
+  void mounted;
+  void mountedPageId;
 }
