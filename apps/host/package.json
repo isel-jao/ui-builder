@@ -1,5 +1,5 @@
 {
-  "name": "@monorepo/react",
+  "name": "@ui-builder/host",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -17,7 +17,7 @@
     "tailwindcss": "^4.3.0"
   },
   "devDependencies": {
-    "@monorepo/types": "workspace:*",
+    "@ui-builder/types": "workspace:*",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",

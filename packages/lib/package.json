@@ -1,5 +1,5 @@
 {
-  "name": "@monorepo/lib",
+  "name": "@ui-builder/lib",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
